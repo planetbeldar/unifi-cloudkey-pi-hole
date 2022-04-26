@@ -88,3 +88,25 @@ DNSStubListener=no" > /etc/systemd/resolved.conf
 pihole -r # repair pihole
 pihole -a -p # set pihole webui password
 #+end_src
+
+** Optional: Unbound
+https://docs.pi-hole.net/guides/dns/unbound/
+*** Install unbound (should also install dns-root-data if it's not already installed)
+#+begin_src shell
+apt-get install unbound
+systemctl disable unbound-resolvconf.service
+#+end_src
+
+*** Update unbound Pi-hole configuration
+#+begin_src shell
+curl -sSL https://raw.githubusercontent.com/planetbeldar/unifi-cloudkey-pi-hole/main/unbound-pi-hole.conf > /etc/unbound/unbound.conf.d/pi-hole.conf
+service unbound restart
+echo 'edns-packet-max=1232' > /etc/dnsmasq.d/99-edns.conf # tell FTL to use same limit as specified in unbound config
+#+end_src
+
+*** Update dnsmasq and pi-hole configuration
+#+begin_src shell
+sed -i '/^server=/d' /etc/dnsmasq.d/01-pihole.conf && echo 'server=127.0.0.1#5335' >> /etc/dnsmasq.d/01-pihole.conf
+sed -i '/^PIHOLE_DNS_[0-9]=/d' /etc/pihole/setupVars.conf && echo 'PIHOLE_DNS_1=127.0.0.1#5335' >> /etc/pihole/setupVars.conf
+service pihole-FTL restart
+#+end_src

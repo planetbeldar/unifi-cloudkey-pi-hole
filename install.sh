@@ -47,7 +47,6 @@ update_dist() {
   apt-get install curl dh-python e2fsprogs findutils liblocale-gettext-perl libpython2.7 libpython2.7-minimal libpython2.7-stdlib libtext-charwidth-perl libtext-iconv-perl perl perl-base python2.7 python2.7-minimal python3-six
   apt-get upgrade
   apt-get upgrade --with-new-pkgs
-  # apt-get install unattended-upgrades apt-listchanges
 }
 
 install_pihole() {
@@ -68,6 +67,18 @@ DNSStubListener=no" > /etc/systemd/resolved.conf
 
   hostnamectl set-hostname UniFi-CloudKey-Pi-hole
   pihole -r
+  apt-get install unattended-upgrades apt-listchanges # reinstall
+}
+
+install_unbound() {
+  apt-get install unbound
+  systemctl disable unbound-resolvconf.service
+  curl -sSL https://raw.githubusercontent.com/planetbeldar/unifi-cloudkey-pi-hole/main/unbound-pi-hole.conf > /etc/unbound/unbound.conf.d/pi-hole.conf
+  service unbound restart
+  echo 'edns-packet-max=1232' > /etc/dnsmasq.d/99-edns.conf # tell FTL to use same limit as specified in unbound config
+  sed -i '/^server=/d' /etc/dnsmasq.d/01-pihole.conf && echo 'server=127.0.0.1#5335' >> /etc/dnsmasq.d/01-pihole.conf
+  sed -i '/^PIHOLE_DNS_[0-9]=/d' /etc/pihole/setupVars.conf && echo 'PIHOLE_DNS_1=127.0.0.1#5335' >> /etc/pihole/setupVars.conf
+  service pihole-FTL restart
 }
 
 main() {
@@ -105,6 +116,14 @@ main() {
   install_pihole
   echo "Setting up services"
   setup_services
+
+  printf "Install and configure unbound as your upstream DNS? (Y/n)"
+  read -rsn1 install_unbound && echo
+  if [[ $install_unbound =~ ^[Yy]$ ]]; then
+    echo "Installing and configuring unbound"
+    install_unbound
+  fi
+
   echo "Done, please reboot the system."
 }
 

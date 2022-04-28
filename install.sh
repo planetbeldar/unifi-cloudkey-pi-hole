@@ -18,9 +18,12 @@ apt-get() {
 }
 
 uninstall_unifi() {
-  systemctl stop unifi ubnt-systemhub
+  # ubnt-systemhub service needs to start to make the CK LED stop blinking
+  # systemctl stop unifi ubnt-systemhub
+  # dpkg -P ubnt-systemhub
   dpkg -P unifi cloudkey-webui ubnt-freeradius-setup freeradius-ldap freeradius-common freeradius-utils libfreeradius2 freeradius php5-cli php5-common php5-fpm php5-json ubnt-unifi-setup
-  dpkg -P unattended-upgrades # for some reason, the upgrade of this package sometimes halts the process, install later on.
+  # for some reason, the upgrade of this package sometimes halts the process, install later on.
+  dpkg -P unattended-upgrades
 }
 
 update_deb_sources() {
@@ -81,6 +84,30 @@ install_unbound() {
   service pihole-FTL restart
 }
 
+configure_rev_server() {
+  local cidr="$1"
+  local dhcp_ip="$2"
+
+  [[ -z $cidr || -z $dhcp_ip ]] && echo "Error, no rev server configuration defined" && return;
+
+  sed -i '/^rev-server=/d' /etc/dnsmasq.d/01-pihole.conf
+  echo "rev-server=$cidr,$dhcp_ip" >> /etc/dnsmasq.d/01-pihole.conf
+  sed -i '/^REV_SERVER/d' /etc/pihole/setupVars.conf
+  echo "REV_SERVER=true
+REV_SERVER_CIDR=$cidr
+REV_SERVER_TARGET=$dhcp_ip
+REV_SERVER_DOMAIN=" >> /etc/pihole/setupVars.conf
+  service pihole-FTL restart
+}
+
+configure_allow_subnets() {
+  sed -i '/^interface=/d' /etc/dnsmasq.d/01-pihole.conf
+  echo 'interface=eth0' >> /etc/dnsmasq.d/01-pihole.conf
+  sed -i '/^DNSMASQ_LISTENING=/d' /etc/pihole/setupVars.conf
+  echo 'DNSMASQ_LISTENING=single' >> /etc/pihole/setupVars.conf
+  service pihole-FTL restart
+}
+
 main() {
   if [[ $interactive == "true" ]]; then
     printf "Run the install script? (y/N)"
@@ -102,8 +129,11 @@ main() {
     exit $?
   fi
 
+  echo "Setting timezone"
+  timedatectl set-timezone $(curl -sSL https://ipapi.co/timezone)
+
   while [[ -n $(systemctl | grep unifi.service | grep activating) ]]; do
-    echo -ne "Waiting for unifi to get up and running.. \r"
+    echo -ne "Waiting for the unifi service to get up and running.. \r"
     sleep 5
   done
   echo && echo "Uninstalling packages"
@@ -118,10 +148,26 @@ main() {
   setup_services
 
   printf "Install and configure unbound as your upstream DNS? (Y/n)"
-  read -rsn1 install_unbound && echo
-  if [[ $install_unbound =~ ^[Yy]$ ]]; then
+  read -rsn1 unbound && echo
+  if [[ ! $unbound =~ ^[Nn]$ ]]; then
     echo "Installing and configuring unbound"
     install_unbound
+  fi
+
+  printf "Setup conditional forwarding? (Y/n)"
+  read -rsn1 rev_server && echo
+  if [[ ! $rev_server =~ ^[Nn]$ ]]; then
+    echo "Configuring dnsmasq and pi-hole"
+    printf "Network CIDR: " && read -r cidr
+    printf "DHCP ip: " && read -r dhcp_ip
+    configure_rev_server $cidr $dhcp_ip
+  fi
+
+  printf "Allow subnets to use Pi-hole/dnsmasq? (Y/n)"
+  read -rsn1 allow_subnets && echo
+  if [[ ! $allow_subnets =~ ^[Nn]$ ]]; then
+    echo "Configuring dnsmasq and pi-hole"
+    configure_allow_subnets
   fi
 
   echo "Done, please reboot the system."

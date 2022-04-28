@@ -80,6 +80,37 @@
     pihole -a -p # set pihole webui password
     #+end_src
 
+** Optional: Use Conditional Forwarding (when not running Pi-hole as DHCP)
+- Enable settings (use your own local networks ip range and DHCP server)
+    #+begin_src shell
+    sed -i '/^rev-server=/d' /etc/dnsmasq.d/01-pihole.conf
+    echo 'rev-server=10.1.0.0/16,10.1.1.1' >> /etc/dnsmasq.d/01-pihole.conf # <CIDR>,<DHCP-server>
+    sed -i '/^REV_SERVER/d' /etc/pihole/setupVars.conf
+    echo 'REV_SERVER=true
+REV_SERVER_CIDR=10.1.0.0/16
+REV_SERVER_TARGET=10.1.1.1
+REV_SERVER_DOMAIN=' >> /etc/pihole/setupVars.conf
+    service pihole-FTL restart
+    #+end_src
+
+- (Optional) Refresh USG //etc/hosts
+  https://nathan.thenovaks.net/2021/04/20/clear-dns-cache-from-dchp-on-unifi-security-gateway/
+    #+begin_src shell
+    ssh <usg ip> -l <user>
+    sudo vi /etc/hosts # remove old entries set by dhcp
+    sudo /etc/init.d/dnsmasq force-reload # reload dnsmasq
+    clear dhcp leases # optional - different from rm /config/dhcpd.leases ?
+    #+end_src
+
+** Optional: Allow subnets to use the DNS
+- Enable settings (would prefer to use listen-address - not an option in the pihole interface)
+    #+begin_src shell
+    sed -i '/^local-service/d' /etc/dnsmasq.d/01-pihole.conf
+    echo 'interface=eth0' >> /etc/dnsmasq.d/01-pihole.conf
+    sed -i '/^DNSMASQ_LISTENING=/d' /etc/pihole/setupVars.conf
+    echo 'DNSMASQ_LISTENING=single' >> /etc/pihole/setupVars.conf
+    #+end_src
+
 ** Optional: Unbound
 https://docs.pi-hole.net/guides/dns/unbound/
 1. Install unbound (should also install dns-root-data if it's not already installed)

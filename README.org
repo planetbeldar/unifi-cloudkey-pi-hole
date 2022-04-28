@@ -89,7 +89,7 @@
     echo 'REV_SERVER=true
 REV_SERVER_CIDR=10.1.0.0/16
 REV_SERVER_TARGET=10.1.1.1
-REV_SERVER_DOMAIN=' >> /etc/pihole/setupVars.conf
+REV_SERVER_DOMAIN=localdomain' >> /etc/pihole/setupVars.conf
     service pihole-FTL restart
     #+end_src
 
@@ -109,6 +109,13 @@ REV_SERVER_DOMAIN=' >> /etc/pihole/setupVars.conf
     echo 'interface=eth0' >> /etc/dnsmasq.d/01-pihole.conf
     sed -i '/^DNSMASQ_LISTENING=/d' /etc/pihole/setupVars.conf
     echo 'DNSMASQ_LISTENING=single' >> /etc/pihole/setupVars.conf
+    #+end_src
+
+** Optional: Add custom adlist - https://dbl.oisd.nl
+    #+begin_src shell
+    apt-get install sqlite3
+    sqlite3 /etc/pihole/gravity.db "INSERT INTO adlist (address, comment) VALUES ('https://dbl.oisd.nl', 'https://oisd.nl');"
+    pihole -g
     #+end_src
 
 ** Optional: Unbound

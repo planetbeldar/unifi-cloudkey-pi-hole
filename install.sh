@@ -69,7 +69,6 @@ DNS=1.1.1.1
 DNSStubListener=no" > /etc/systemd/resolved.conf
 
   hostnamectl set-hostname UniFi-CloudKey-Pi-hole
-  pihole -r
   apt-get install unattended-upgrades apt-listchanges # reinstall
 }
 
@@ -87,8 +86,9 @@ install_unbound() {
 configure_rev_server() {
   local cidr="$1"
   local dhcp_ip="$2"
+  local domain="$3"
 
-  [[ -z $cidr || -z $dhcp_ip ]] && echo "Error, no rev server configuration defined" && return;
+  [[ -z $cidr || -z $dhcp_ip ]] && echo "Error, no rev server configuration defined" && return
 
   sed -i '/^rev-server=/d' /etc/dnsmasq.d/01-pihole.conf
   echo "rev-server=$cidr,$dhcp_ip" >> /etc/dnsmasq.d/01-pihole.conf
@@ -96,7 +96,7 @@ configure_rev_server() {
   echo "REV_SERVER=true
 REV_SERVER_CIDR=$cidr
 REV_SERVER_TARGET=$dhcp_ip
-REV_SERVER_DOMAIN=" >> /etc/pihole/setupVars.conf
+REV_SERVER_DOMAIN=$domain" >> /etc/pihole/setupVars.conf
   service pihole-FTL restart
 }
 
@@ -108,26 +108,57 @@ configure_allow_subnets() {
   service pihole-FTL restart
 }
 
-main() {
-  if [[ $interactive == "true" ]]; then
-    printf "Run the install script? (y/N)"
-    read -rsn1 install && echo
-    [[ ! "$install" =~ ^[Yy]$ ]] && exit 0
+add_gravity_adlist() {
+  local adlist="$1"
+  local comment="$2"
+
+  [[ -z $adlist ]] && echo "Error, no adlist to add" && return
+
+  if [[ -z $(command -v sqlite3) ]]; then
+    apt-get install sqlite3
   fi
 
+  sqlite3 /etc/pihole/gravity.db "INSERT INTO adlist (address, comment) VALUES ('$adlist', '$comment');"
+  pihole -g
+}
+
+prompt_match() {
+  local prompt=$1
+  local pattern=$2
+  local instant=$3
+  local options="-r$([[ $instant ]] && echo "sn1")"
+  local input
+
+  IFS= read -p "$prompt" "$options" input
+  while [[ ! "$input" =~ $pattern ]]; do
+    if [[ $instant ]]; then
+      IFS= read "$options" input
+    else
+      IFS= read -p "$prompt" "$options" input
+    fi
+  done
+  echo "$input"
+}
+
+
+main() {
   echo "Checking for root user"
   if [[ "${EUID}" -ne 0 ]]; then
-    # when run via curl piping
-    if [[ "$0" == "bash" ]]; then
-        # Download the install script and run it with admin rights
-        exec curl -sSL https://raw.githubusercontent.com/planetbeldar/unifi-cloudkey-pi-hole/main/install.sh | sudo bash "$@"
-    else
-        # when run via calling local bash script
-        exec sudo bash "$0" "$@"
-    fi
-
-    exit $?
+    echo "Please rerun script as root"
+    exit 1
   fi
+
+  local use_unbound=$(prompt_match "Install and configure unbound as your upstream DNS? (y/n)" [yYnN] 1) && echo
+
+  local use_rev_server=$(prompt_match "Setup conditional forwarding? (y/n)" [yYnN] 1) && echo
+  if [[ $use_rev_server =~ ^[Yy]$ ]]; then
+    local cidr=$(prompt_match "Network CIDR: " ^[0-9.\/]*$)
+    local dhcp_ip=$(prompt_match "DHCP IP: " ^[0-9.]*$)
+    local domain=$(prompt_match "Domain (optional): " ^[a-zA-Z.-]*$)
+  fi
+
+  local allow_subnets=$(prompt_match "Allow subnets to use Pi-hole/dnsmasq? (y/n)" [yYnN] 1) && echo
+  local add_adlist=$(prompt_match "Add THE #ONE adlist - https://dbl.oisd.nl? (y/n)" [yYnN] 1) && echo
 
   echo "Setting timezone"
   timedatectl set-timezone $(curl -sSL https://ipapi.co/timezone)
@@ -147,29 +178,27 @@ main() {
   echo "Setting up services"
   setup_services
 
-  printf "Install and configure unbound as your upstream DNS? (Y/n)"
-  read -rsn1 unbound && echo
-  if [[ ! $unbound =~ ^[Nn]$ ]]; then
+  if [[ $use_unbound =~ ^[yY]$ ]]; then
     echo "Installing and configuring unbound"
     install_unbound
   fi
 
-  printf "Setup conditional forwarding? (Y/n)"
-  read -rsn1 rev_server && echo
-  if [[ ! $rev_server =~ ^[Nn]$ ]]; then
-    echo "Configuring dnsmasq and pi-hole"
-    printf "Network CIDR: " && read -r cidr
-    printf "DHCP ip: " && read -r dhcp_ip
-    configure_rev_server $cidr $dhcp_ip
+  if [[ $use_rev_server =~ ^[yY]$ ]]; then
+    echo "Configuring dnsmasq and pi-hole for conditional forwarding"
+    configure_rev_server $cidr $dhcp_ip $domain
   fi
 
-  printf "Allow subnets to use Pi-hole/dnsmasq? (Y/n)"
-  read -rsn1 allow_subnets && echo
-  if [[ ! $allow_subnets =~ ^[Nn]$ ]]; then
-    echo "Configuring dnsmasq and pi-hole"
+  if [[ $allow_subnets =~ ^[yY]$ ]]; then
+    echo "Configuring dnsmasq and pi-hole to allow subnets"
     configure_allow_subnets
   fi
 
+  if [[ $add_adlist =~ ^[yY]$ ]]; then
+    echo "Installing adlist - https://dbl.oisd.nl"
+    add_gravity_adlist "https://dbl.oisd.nl" "https://oisd.nl"
+  fi
+
+  pihole -r
   echo "Done, please reboot the system."
 }
 

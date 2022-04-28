@@ -3,7 +3,7 @@
 - Reset to factory defaults, reboot and SSH to the Cloud Key (ubnt/ubnt)
 - Run install script and/or keep on reading:
     #+begin_src shell
-    curl -sSL https://raw.githubusercontent.com/planetbeldar/unifi-cloudkey-pi-hole/main/install.sh | bash
+    bash <(curl -sSL https://raw.githubusercontent.com/planetbeldar/unifi-cloudkey-pi-hole/main/install.sh)
     #+end_src
 
 ** Manul steps

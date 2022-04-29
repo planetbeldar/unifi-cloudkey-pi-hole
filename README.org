@@ -1,9 +1,18 @@
 ** Repurpose a UniFI Cloud Key and install Pi-hole
 - Upgrade Cloud Key firmware (1.1.19 as of typing)
 - Reset to factory defaults, reboot and SSH to the Cloud Key (ubnt/ubnt)
-- Run install script and/or keep on reading:
+** Run install script and/or keep on reading:
     #+begin_src shell
     bash <(curl -sSL https://raw.githubusercontent.com/planetbeldar/unifi-cloudkey-pi-hole/main/install.sh)
+    #+end_src
+
+** Download script and run with --unattended (requires setupVars.conf)
+    #+begin_src shell
+    git clone https://github.com/planetbeldar/unifi-cloudkey-pi-hole.git
+    # copy your Pi-hole configuration to /etc/pihole
+    mkdir -p /etc/pihole
+    cp <my-config> /etc/pihole/setupVars.conf
+    unifi-cloudkey-pi-hole/install.sh --unattended
     #+end_src
 
 ** Manul steps

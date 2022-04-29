@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 
-interactive="false"
+debian_dist="bullseye"
 
 while [ "$1" != "" ]; do
   case "$1" in
+  --unattended)
+    unattended="true"
+    ;;
   -i | --interactive)
     interactive="true"
     ;;
@@ -27,19 +30,21 @@ uninstall_unifi() {
 }
 
 update_deb_sources() {
+  local _debian_dist=$1
+  [[ -z $_debian_dist ]] && echo "Error, specify dist" && return
   rm /etc/apt/sources.list
   rm /etc/apt/sources.list.d/*
 
-  echo "deb http://deb.debian.org/debian bullseye main contrib non-free
-deb-src http://deb.debian.org/debian bullseye main contrib non-free
+  echo "deb http://deb.debian.org/debian $_debian_dist main contrib non-free
+deb-src http://deb.debian.org/debian $_debian_dist main contrib non-free
 
-deb http://deb.debian.org/debian-security/ bullseye-security main contrib non-free
-deb-src http://deb.debian.org/debian-security/ bullseye-security main contrib non-free
+deb http://deb.debian.org/debian-security/ $_debian_dist-security main contrib non-free
+deb-src http://deb.debian.org/debian-security/ $_debian_dist-security main contrib non-free
 
-deb http://deb.debian.org/debian bullseye-updates main contrib non-free
-deb-src http://deb.debian.org/debian bullseye-updates main contrib non-free" > /etc/apt/sources.list
+deb http://deb.debian.org/debian $_debian_dist-updates main contrib non-free
+deb-src http://deb.debian.org/debian $_debian_dist-updates main contrib non-free" > /etc/apt/sources.list
 
-  echo "deb https://deb.nodesource.com/node_16.x bullseye main" > /etc/apt/sources.list.d/nodesource.list
+  echo "deb https://deb.nodesource.com/node_16.x $_debian_dist main" > /etc/apt/sources.list.d/nodesource.list
 }
 
 update_dist() {
@@ -53,7 +58,9 @@ update_dist() {
 }
 
 install_pihole() {
-  curl -sSL https://install.pi-hole.net | bash
+  local _unattended=$([[ $1 -eq "true" ]] && echo '/dev/stdin --unattended')
+
+  curl -sSL https://install.pi-hole.net | bash $_unattended
 }
 
 setup_services() {
@@ -61,26 +68,26 @@ setup_services() {
   systemctl stop systemd-resolved
   systemctl mask systemd-resolved nginx
 
-  systemctl start lighttpd
-  systemctl status lighttpd
+  # systemctl start lighttpd
+  # systemctl status lighttpd
 
-  echo "[Resolve]
-DNS=1.1.1.1
-DNSStubListener=no" > /etc/systemd/resolved.conf
-
-  hostnamectl set-hostname UniFi-CloudKey-Pi-hole
-  apt-get install unattended-upgrades apt-listchanges # reinstall
+#   echo "[Resolve]
+# DNS=1.1.1.1
+# DNSStubListener=no" > /etc/systemd/resolved.conf
 }
 
 install_unbound() {
+  local _unattended=$1
+
   apt-get install unbound
   systemctl disable unbound-resolvconf.service
   curl -sSL https://raw.githubusercontent.com/planetbeldar/unifi-cloudkey-pi-hole/main/unbound-pi-hole.conf > /etc/unbound/unbound.conf.d/pi-hole.conf
   service unbound restart
   echo 'edns-packet-max=1232' > /etc/dnsmasq.d/99-edns.conf # tell FTL to use same limit as specified in unbound config
+
+  [[ $_unattended ]] && return; # dont touch config - this assumes you already provided the pi-hole config
   sed -i '/^server=/d' /etc/dnsmasq.d/01-pihole.conf && echo 'server=127.0.0.1#5335' >> /etc/dnsmasq.d/01-pihole.conf
   sed -i '/^PIHOLE_DNS_[0-9]=/d' /etc/pihole/setupVars.conf && echo 'PIHOLE_DNS_1=127.0.0.1#5335' >> /etc/pihole/setupVars.conf
-  service pihole-FTL restart
 }
 
 configure_rev_server() {
@@ -97,7 +104,6 @@ configure_rev_server() {
 REV_SERVER_CIDR=$cidr
 REV_SERVER_TARGET=$dhcp_ip
 REV_SERVER_DOMAIN=$domain" >> /etc/pihole/setupVars.conf
-  service pihole-FTL restart
 }
 
 configure_allow_subnets() {
@@ -105,7 +111,6 @@ configure_allow_subnets() {
   echo 'interface=eth0' >> /etc/dnsmasq.d/01-pihole.conf
   sed -i '/^DNSMASQ_LISTENING=/d' /etc/pihole/setupVars.conf
   echo 'DNSMASQ_LISTENING=single' >> /etc/pihole/setupVars.conf
-  service pihole-FTL restart
 }
 
 add_gravity_adlist() {
@@ -122,9 +127,23 @@ add_gravity_adlist() {
   pihole -g
 }
 
+is_dist() {
+  local _debian_dist=$1
+  [[ -z $_debian_dist ]] && echo "Error, needs to eat argument" && exit 1
+
+  [[ -n $(hostnamectl | grep "$_debian_dist") ]] && echo "true"
+}
+
+is_installed() {
+  local package=$1
+  [[ -z $package ]] && return; # return if no argument
+
+  [[ -n $(dpkg -l | grep "$package") ]] && echo "true"
+}
+
 prompt_match() {
   local prompt=$1
-  local pattern=$2
+  local pattern=${2:-(.*)?}
   local instant=$3
   local options="-r$([[ $instant ]] && echo "sn1")"
   local input
@@ -148,17 +167,21 @@ main() {
     exit 1
   fi
 
+  local web_password=$(prompt_match "Password for Pi-hole web interface: ")
   local use_unbound=$(prompt_match "Install and configure unbound as your upstream DNS? (y/n)" [yYnN] 1) && echo
-
-  local use_rev_server=$(prompt_match "Setup conditional forwarding? (y/n)" [yYnN] 1) && echo
-  if [[ $use_rev_server =~ ^[Yy]$ ]]; then
-    local cidr=$(prompt_match "Network CIDR: " ^[0-9.\/]*$)
-    local dhcp_ip=$(prompt_match "DHCP IP: " ^[0-9.]*$)
-    local domain=$(prompt_match "Domain (optional): " ^[a-zA-Z.-]*$)
-  fi
-
-  local allow_subnets=$(prompt_match "Allow subnets to use Pi-hole/dnsmasq? (y/n)" [yYnN] 1) && echo
   local add_adlist=$(prompt_match "Add THE #ONE adlist - https://dbl.oisd.nl? (y/n)" [yYnN] 1) && echo
+
+  # this can be configured by copying pi-hole config (setupVars.conf) before unattended install
+  if [[ $unattended -ne "true" ]]; then
+    local use_rev_server=$(prompt_match "Setup conditional forwarding? (y/n)" [yYnN] 1) && echo
+    if [[ $use_rev_server =~ ^[Yy]$ ]]; then
+      local cidr=$(prompt_match "Network CIDR: " ^[0-9.\/]*$)
+      local dhcp_ip=$(prompt_match "DHCP IP: " ^[0-9.]*$)
+      local domain=$(prompt_match "Domain (optional): " ^[a-zA-Z.-]*$)
+    fi
+
+    local allow_subnets=$(prompt_match "Allow subnets to use Pi-hole/dnsmasq? (y/n)" [yYnN] 1) && echo
+  fi
 
   echo "Setting timezone"
   timedatectl set-timezone $(curl -sSL https://ipapi.co/timezone)
@@ -167,21 +190,26 @@ main() {
     echo -ne "Waiting for the unifi service to get up and running.. \r"
     sleep 5
   done
-  echo && echo "Uninstalling packages"
-  uninstall_unifi
-  echo "Updating debian sources"
-  update_deb_sources
-  echo "Running dist upgrade"
-  update_dist
-  echo "Running Pi-hole installation script (use eth0)"
-  install_pihole
-  echo "Setting up services"
-  setup_services
+
+  if [[ $(is_dist $debian_dist) ]]; then
+    echo "Debian dist already upgraded to $debian_dist"
+  else
+    echo "\nUninstalling unifi packages"
+    uninstall_unifi
+    echo "Updating debian sources"
+    update_deb_sources $debian_dist
+    echo "Running dist upgrade"
+    update_dist
+  fi
 
   if [[ $use_unbound =~ ^[yY]$ ]]; then
     echo "Installing and configuring unbound"
-    install_unbound
+    install_unbound $unattended
   fi
+  echo "Running Pi-hole installation script"
+  install_pihole $unattended
+  echo "Setting up services"
+  setup_services
 
   if [[ $use_rev_server =~ ^[yY]$ ]]; then
     echo "Configuring dnsmasq and pi-hole for conditional forwarding"
@@ -198,7 +226,18 @@ main() {
     add_gravity_adlist "https://dbl.oisd.nl" "https://oisd.nl"
   fi
 
-  pihole -r
+  if [[ -n $web_password ]]; then
+    echo "Setting Pi-hole web interface password"
+    pihole -a -p $web_password
+  fi
+
+  hostnamectl set-hostname UniFi-CloudKey-Pi-hole
+  if [[ ! $(is_installed "unattended-upgrades") ]]; then
+   apt-get install unattended-upgrades apt-listchanges
+  fi
+
+  # pihole -r
+  service pihole-FTL restart
   echo "Done, please reboot the system."
 }
 
